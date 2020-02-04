@@ -4,7 +4,7 @@ import cv2
 # OpenCV读取视频
 if __name__ == '__main__':
     # 创建一个实例
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture()
     isRunning = True
 
     # 打开视频
