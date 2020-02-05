@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
+# 绘制图形
 if __name__ == '__main__':
     # 读取图片
     lena = cv2.imread('data/Lena.png')
