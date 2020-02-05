@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# 非线性滤波 g = f x kernel
+# 非线性滤波
 if __name__ == '__main__':
     rows = 1
     columns = 3
