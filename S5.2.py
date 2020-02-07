@@ -17,8 +17,8 @@ Gy =   0  0  0  * I
 G = |Gx| + |Gy|
 '''
 if __name__ == '__main__':
-    rows = 1
-    columns = 4
+    rows = 2
+    columns = 3
 
     lena = cv2.imread('data/Lena.png')
     plt.subplot(rows, columns, 1)
@@ -41,5 +41,10 @@ if __name__ == '__main__':
     plt.subplot(rows, columns, 4)
     plt.title('Sobel-Y')
     plt.imshow(cv2.cvtColor(sobelY.copy(), cv2.COLOR_BGR2RGB))
+
+    sobel = cv2.Sobel(lena_gray, cv2.CV_32F, 1, 1, ksize=3)
+    plt.subplot(rows, columns, 5)
+    plt.title('Sobel')
+    plt.imshow(cv2.cvtColor(sobel.copy(), cv2.COLOR_BGR2RGB))
 
     plt.show()
