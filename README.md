@@ -1,5 +1,7 @@
 # Python-OpenCV案例
 
+## 基本案例（sample_example）
+
 01、S1.1：OpenCV的HelloWorld
 
 02、S1.2：腐烛图像
@@ -37,3 +39,5 @@
 18、S4.6：图像金字塔
 
 19、S4.7：阈值化
+
+## 图像拼接（image_stitch）
