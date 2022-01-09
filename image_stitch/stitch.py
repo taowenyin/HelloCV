@@ -39,12 +39,14 @@ def get_feature_point_ensemble(query_image, train_image):
     # x:x[]字母可以随意修改，排序方式按照中括号[]里面的维度进行排序
     match_points = sorted(match_points, key=lambda x: x[0].distance / x[1].distance)
 
-    # 建立列表good_match用于存储匹配的点集
+    # 建立列表good_match用于存储匹配的点集，Lowe's algorithm,获取优秀匹配点，
+    # 参考内容（https://www.cnblogs.com/skyfsm/p/7401523.html）
     good_match = []
     for best_1, best_2 in match_points:
         # ratio的值越大，匹配的线条越密集，但错误匹配点也会增多
         ratio = 0.6
 
+        # 对于错误匹配，由于特征空间的高维性，相似的距离可能有大量其他的错误匹配
         if best_1.distance < ratio * best_2.distance:
             good_match.append(best_1)
 
