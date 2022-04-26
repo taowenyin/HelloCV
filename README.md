@@ -41,3 +41,7 @@
 19、S4.7：阈值化
 
 ## 图像拼接（image_stitch）
+
+## 模式分类实验
+
+### [P127 Prob1](pc_experiment/ex_3.1.py)
