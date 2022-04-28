@@ -2,54 +2,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from sklearn import datasets
-from collections import Counter
-
-
-class MSELoss:
-    # 使用MSE作为损失函数
-    def loss(self, X, y, weights):
-        # 样本大小
-        samples_size = len(X)
-
-        # 计算差值
-        residual = np.dot(X, weights) - y
-        # 计算损失
-        loss = 1 / (2 * samples_size) * np.dot(np.transpose(residual), residual)
-
-        return loss
-
-    # 损失函数求导
-    def loss_gradient(self, X, y, weights):
-        # 样本大小
-        samples_size = len(X)
-
-        # 计算残差
-        residual = np.dot(X, weights) - y
-        # 计算梯度
-        gradient = (1 / samples_size) * np.dot(np.transpose(X), residual)
-
-        return gradient, residual
+from tqdm import tqdm
 
 
 class Optimizer:
     """
     梯度下降法
     """
-    def __init__(self, loss_func: MSELoss, method, weights=None,
-                 threshold=1e-5, margin=1.0, winnow_alpha=2):
-        self.loss_func = loss_func
+    def __init__(self, method, weights=None, threshold=1e-5,
+                 hk_b=None, margin=1.0, winnow_alpha=2):
         self.method = method
         self.weights = weights
         self.winnow_alpha = winnow_alpha
 
         # 记录每次的梯度值、方差值、损失
         self.gradient_collection = None
-        self.residual_collection = []
-        self.loss_collection = []
 
         # 带Margin的变增量感知机算法中的Margin参数
         self.threshold = threshold
-        self.margin = -1 * margin
+        self.margin = margin
+        self.hk_b = hk_b
 
     def optimize(self, X, y, lr, max_iter):
         # 迭代的次数
@@ -58,20 +30,26 @@ class Optimizer:
         error_count = 0
 
         while step < max_iter:
-            # 计算梯度
-            gradient, residual = self.loss_func.loss_gradient(X, y, self.weights)
             # 每次迭代初始化
             if (self.method != 'OneSamplePerception') and (self.method != 'MarginPerception'):
                 error_count = 0
 
             # todo 算法添加
             if self.method == 'GD':
-                # 参考书上P184，算法1：梯度下降公式
+                # 参考书上P184，算法1：梯度下降公式，并使用P186的感知机准则函数的梯度公式（17）
+                gradient = np.sum(X, axis=0).reshape(-1, 1)
                 threshold_gradient = lr * gradient
+
+                # 参考书上P186，公式17，需要在前面加个负号
+                threshold_gradient = -1 * threshold_gradient
             elif self.method == 'Newtons':
-                # 参考书上P185，算法2：牛顿下降公式
+                # 参考书上P185，算法2：牛顿下降公式，并使用P186的感知机准则函数的梯度公式（17）
+                gradient = np.sum(X, axis=0).reshape(-1, 1)
                 H = np.linalg.pinv(2 * np.dot(np.transpose(X), X))
                 threshold_gradient = np.dot(H, gradient)
+
+                # 参考书上P186，公式17，需要在前面加个负号
+                threshold_gradient = -1 * threshold_gradient
             elif self.method == 'Perception':
                 threshold_gradient = np.zeros(self.weights.shape)
                 # 参考书上P186，算法3：感知机算法
@@ -79,8 +57,8 @@ class Optimizer:
                     data = X[i].reshape(1, -1)
                     target = y[i][0]
                     # 判断错分的样本
-                    if target * np.dot(data, self.weights) <= 0:
-                        threshold_gradient += lr * np.dot(target, data).reshape(-1, 1)
+                    if np.dot(data, self.weights) <= 0:
+                        threshold_gradient += lr * data.reshape(-1, 1)
                         # 错分类+1
                         error_count += 1
 
@@ -90,11 +68,10 @@ class Optimizer:
                 threshold_gradient = np.zeros(self.weights.shape)
                 i = step % len(X)
                 data = X[i].reshape(1, -1)
-                target = y[i][0]
                 # 参考书上P188，算法4：固定增量单样本感知机
-                if target * np.dot(data, self.weights) <= 0:
+                if np.dot(data, self.weights) <= 0:
                     # 注意：单样本是不需要乘以学习率
-                    threshold_gradient = np.dot(target, data).reshape(-1, 1)
+                    threshold_gradient = data.reshape(-1, 1)
                     error_count += 1
 
                 threshold_gradient = -1 * threshold_gradient
@@ -104,11 +81,10 @@ class Optimizer:
                 lr = 1 / (step + 1)
                 i = step % len(X)
                 data = X[i].reshape(1, -1)
-                target = y[i][0]
                 # 参考书上P190，算法5：带Margin的变增量感知机
-                if target * np.dot(data, self.weights) <= self.margin:
+                if np.dot(data, self.weights) <= self.margin:
                     # 注意：带Margin的变增量感知机需要乘以学习率
-                    threshold_gradient = lr * np.dot(target, data).reshape(-1, 1)
+                    threshold_gradient = lr * data.reshape(-1, 1)
                     error_count += 1
 
                 threshold_gradient = -1 * threshold_gradient
@@ -121,14 +97,62 @@ class Optimizer:
                     data = X[i].reshape(1, -1)
                     target = y[i][0]
                     # 判断错分的样本
-                    if target * np.dot(data, self.weights) <= 0:
-                        threshold_gradient += np.dot(target, data).reshape(-1, 1)
+                    if np.dot(data, self.weights) <= 0:
+                        threshold_gradient += data.reshape(-1, 1)
                         # 错分类+1
                         error_count += 1
 
                 # 参考书上P186，公式17，需要在前面加个负号
                 threshold_gradient = -1 * lr * threshold_gradient
+            elif self.method == 'RelaxationMarginPerception':
+                threshold_gradient = np.zeros(self.weights.shape)
+                i = step % len(X)
+                data = X[i].reshape(1, -1)
+
+                # 参考书上P193，算法9：带Margin的松弛感知机
+                if np.dot(data, self.weights) <= self.margin:
+                    factor = lr * ((self.margin - np.dot(data, self.weights)) /
+                                   (np.linalg.norm(data, ord=2) ** 2))
+                    threshold_gradient = factor * data.reshape(-1, 1)
+                    error_count += 1
+
+                threshold_gradient = -1 * threshold_gradient
+            elif self.method == 'LMS':
+                i = step % len(X)
+                data = X[i].reshape(1, -1)
+
+                # 参考书上P201，算法10：LMS算法
+                factor = lr * (self.margin - np.dot(data, self.weights))
+                threshold_gradient = -1 * factor * data.reshape(-1, 1)
+            elif self.method == 'Ho-Kashyap':
+                # 为统一操作创建，无用
+                threshold_gradient = np.zeros(self.weights.shape)
+
+                # 参考书上P204，算法11：Ho-Kashyap算法
+                e = np.dot(X, self.weights) - self.hk_b # [sample_size, 1]
+                e_p = 0.5 * (e + abs(e))  # [sample_size, 1]
+                lr_k = lr / (step + 1)
+                if max(abs(e)) > min(self.hk_b):
+                    self.hk_b += 2 * lr_k * e_p
+                    self.weights = np.dot(np.linalg.pinv(X), self.hk_b) # [feature_num, 1]
+                else:
+                    break
+            elif self.method == 'Plus-Ho-Kashyap':
+                # 为统一操作创建，无用
+                threshold_gradient = np.zeros(self.weights.shape)
+
+                # 参考书上P207，算法12：Ho-Kashyap的改进算法
+                e = np.dot(X, self.weights) - self.hk_b # [sample_size, 1]
+                e_p = 0.5 * (e + abs(e))  # [sample_size, 1]
+                lr_k = lr / (step + 1)
+                if max(abs(e)) > min(self.hk_b):
+                    self.hk_b += 2 * lr_k * (e + abs(e))
+                    self.weights = np.dot(np.linalg.pinv(X), self.hk_b) # [feature_num, 1]
+                else:
+                    break
             else:
+                # 参考书上P184，算法1：梯度下降公式，并使用P186的感知机准则函数的梯度公式（17）
+                gradient = np.sum(X, axis=0).reshape(-1, 1)
                 # 参考书上P184，算法1：梯度下降公式
                 threshold_gradient = lr * gradient
 
@@ -137,43 +161,27 @@ class Optimizer:
             # 权重更新
             self.weights -= threshold_gradient
 
-            # 保存平均的均方差和梯度
-            if self.gradient_collection is None:
-                self.gradient_collection = gradient.reshape(1, -1)
-            else:
-                self.gradient_collection = np.vstack((self.gradient_collection, gradient.reshape(1, -1)))
+            # # 感知机的停止条件与其他不同
+            # if self.method == 'Perception':
+            #     if error_count == 0:
+            #         print('经过{}次迭代{}收敛，训练错误率 = 0'.format(step, self.method))
+            #         return
+            # elif self.method == 'GD' or self.method == 'Newtons' or self.method == 'LMS':
+            #     # 如果梯度足够小，则停止计算
+            #     if all(abs(threshold_gradient) <= self.threshold):
+            #         print('经过{}次迭代{}收敛'.format(step, self.method))
+            #         break
 
-            self.residual_collection.append(residual.ravel()[0])
-
-            # 计算并保存损失
-            loss = self.loss_func.loss(X, y, self.weights)[0][0]
-            self.loss_collection.append(loss)
-
-            # 感知机的停止条件与其他不同
-            if self.method == 'Perception':
-                if error_count == 0:
-                    print('经过{}次迭代{}收敛，训练错误率 = 0'.format(step, self.method))
-                    return
-            elif self.method == 'GD' or self.method == 'Newtons':
-                # 如果梯度足够小，则停止计算
-                # 书上的停止条件
-                if all(abs(threshold_gradient) <= self.threshold):
-                # if len(self.residual_collection) > 1 and \
-                #         abs(self.residual_collection[-1] - self.residual_collection[-2] < self.threshold):
-                    print('经过{}次迭代{}收敛，残差 = {:.2f}，损失 = {:.2f}'.format(
-                        step, self.method, self.residual_collection[-1], loss))
-                    return
-
-        # 打印平均的梯度和均方差
-        if self.method == 'Perception' or \
-                self.method == 'OneSamplePerception' or \
-                self.method == 'MarginPerception' or \
-                self.method == 'BatchLrPerception' or \
-                self.method == 'WinnowPerception':
-            print('经过{}次迭代{}收敛，训练错误率 = {:.2f}'.format(step, self.method, error_count / len(X)))
-        else:
-            print('经过{}次迭代{}收敛，残差 = {:.2f}，损失 = {:.2f}'.format(
-                step, self.method, self.residual_collection[-1], self.loss_collection[-1]))
+        # # 打印平均的梯度和均方差
+        # if self.method == 'Perception' or \
+        #         self.method == 'OneSamplePerception' or \
+        #         self.method == 'MarginPerception' or \
+        #         self.method == 'BatchLrPerception' or \
+        #         self.method == 'WinnowPerception' or \
+        #         self.method == 'RelaxationMarginPerception':
+        #     print('经过{}次迭代{}收敛，训练错误率 = {:.2f}'.format(step, self.method, error_count / len(X)))
+        # else:
+        #     print('经过{}次迭代{}收敛'.format(step, self.method))
 
 
 class LinearClassifier:
@@ -182,59 +190,47 @@ class LinearClassifier:
         self.lr = lr
         self.max_iter = max_iter
 
-    def data_enlarge(self, data):
-        if len(data.shape) > 1:
-            data = np.insert(data, 0, values=1, axis=1)
-        else:
-            data = np.insert(data, 0, values=1)
-
-        return data
-
     def fit(self, X, y):
         self.X = X
         self.y = y.reshape(-1, 1)
 
-        size, dim = self.X.shape
-        # 使用广义线性判别，P182，公式10、11，要给x和weights增加一个维度，并且值为1
-        self.X = self.data_enlarge(self.X)
         if self.optimal.weights is None:
-            self.optimal.weights = np.ones(dim + 1).reshape(-1, 1)
-        else:
-            self.optimal.weights = self.data_enlarge(self.optimal.weights)
+            self.optimal.weights = np.random.randn(self.X.shape[1]).reshape(-1, 1)
 
         self.optimal.optimize(self.X, self.y, self.lr, self.max_iter)
 
         return self
 
     def predict(self, X):
-        X = self.data_enlarge(X)
         # 预测结果
-        y = np.dot(X, self.optimal.weights)
+        y_hat = np.dot(X, self.optimal.weights)
 
-        # 获取标签
-        y_label = np.sort(np.unique(self.y))
-        # 设置标签
-        y[y > 0] = y_label[1]
-        y[y < 0] = y_label[0]
-        y = np.array(y.reshape(1, -1)[0], dtype=np.int64)
-
-        return y
+        return y_hat
 
     def score(self, X, y):
-        y = y.reshape(-1, 1)
-        X = self.data_enlarge(X)
+        y_hat = self.predict(X)
+        y_label = np.sort(np.unique(y))
+        # 大于0属于第一类，小于0属于第二类
+        y_hat[y_hat > 0] = y_label[0]
+        y_hat[y_hat < 0] = y_label[1]
 
-        variance = self.optimal.loss_func.loss(X, y, self.optimal.weights)
-        return variance[0][0]
+        y_hat = np.array(y_hat.reshape(1, -1)[0], dtype=np.int64)
+
+        # 返回正确率
+        return np.sum((y_hat == y)) / len(y)
 
 
-def dataset_random_choice(data, target, category):
+def dataset_random_choice(data, target, category, data_enlarge=True):
+    # 默认对数据进行增广，使用广义线性判别，P182，公式10、11，要给x和weights增加一个维度，并且值为1
+    if data_enlarge:
+        data = np.insert(data, 0, values=1, axis=1)
+
     # 提取指定类别的数据和标签
     class0_data = data[target == category[0]]
     class1_data = data[target == category[1]]
-    # 按照P183线性可分的规范化操作，把Class1类的标签设置为1，Class2类的标签设置为-1
-    class0_target = np.ones(target[target == category[0]].shape)
-    class1_target = np.full(target[target == category[1]].shape, -1)
+
+    class0_target = target[target == category[0]]
+    class1_target = target[target == category[1]]
 
     # 构建训练样本的索引
     train_index = np.arange(len(class0_target))
@@ -251,7 +247,8 @@ def dataset_random_choice(data, target, category):
 
     class1_train_index = np.random.choice(train_index, 25, replace=False)
     class1_test_index = np.delete(train_index, class1_train_index, axis=0)
-    class1_train_X = class1_data[class1_train_index]
+    # # 按照P183线性可分的规范化操作，要把训练集的第二类数据X乘-1，使得得到图5-8右边的效果，而测试集不需要
+    class1_train_X = -1 * class1_data[class1_train_index]
     class1_test_X = class1_data[class1_test_index]
     class1_train_y = class1_target[class1_train_index]
     class1_test_y = class1_target[class1_test_index]
@@ -275,7 +272,7 @@ def dataset_random_choice(data, target, category):
     return train_X, test_X, train_y, test_y
 
 
-def program_1(dataset):
+def algorithm_compare(dataset, category, ax):
     _target = dataset.target
     # 数据做归一化
     _data = (dataset.data - np.mean(dataset.data, axis=0)) / np.std(dataset.data, axis=0)
@@ -290,68 +287,57 @@ def program_1(dataset):
     margin_perception_accuracy_collection = []
     batch_lr_perception_accuracy_collection = []
     winnow_perception_accuracy_collection = []
+    relaxation_margin_perception_accuracy_collection = []
+    lms_perception_accuracy_collection = []
+    hk_perception_accuracy_collection = []
+    plus_hk_perception_accuracy_collection = []
 
-    for i in range(epoch):
+    for i in tqdm(range(epoch), desc='类{}和类{}在不同优化器下的比较'.format(category[0], category[1])):
         # 对数据集随机采样，并构建训练集和测试集数据
-        train_X, test_X, train_y, test_y = dataset_random_choice(_data, _target, [0, 2])
-
-        # 定义MSE损失函数
-        loss = MSELoss()
-
-        print('==========周期{}=========='.format(i + 1))
+        train_X, test_X, train_y, test_y = dataset_random_choice(_data, _target, category)
 
         # todo 算法使用
         # ==========================算法1：梯度下降算法=======================
         # 使用GD优化器进行优化
-        optimal_gd = Optimizer(loss, method='GD')
+        optimal_gd = Optimizer(method='GD')
         # 使用相同的训练流程，但选择不同的优化器来拟合训练数据
-        model_gd = LinearClassifier(optimal_gd, lr=0.001).fit(train_X, train_y)
+        model_gd = LinearClassifier(optimal_gd, lr=0.1).fit(train_X, train_y)
         # 预测结果
-        test_predict_gd = model_gd.predict(test_X)
-        # 计算精度
-        accuracy_gd = Counter(np.multiply(test_predict_gd, test_y))[1] / len(test_y)
+        accuracy_gd = model_gd.score(test_X, test_y)
         # 保存精度
         gd_accuracy_collection.append(accuracy_gd)
 
         # ==========================算法2：牛顿下降算法=======================
-        optimal_newtons = Optimizer(loss, method='Newtons')
+        optimal_newtons = Optimizer(method='Newtons')
         model_newtons = LinearClassifier(optimal_newtons, lr=0.001).fit(train_X, train_y)
-        test_predict_newtons = model_newtons.predict(test_X)
-        accuracy_newtons = Counter(np.multiply(test_predict_newtons, test_y))[1] / len(test_y)
+        accuracy_newtons = model_newtons.score(test_X, test_y)
         newtons_accuracy_collection.append(accuracy_newtons)
 
         # ==========================算法3：感知机准则算法=======================
-        optimal_perception = Optimizer(loss, method='Perception')
+        optimal_perception = Optimizer(method='Perception')
         model_perception = LinearClassifier(optimal_perception, lr=0.001).fit(train_X, train_y)
-        test_predict_perception = model_perception.predict(test_X)
-        accuracy_perception = Counter(np.multiply(test_predict_perception, test_y))[1] / len(test_y)
+        accuracy_perception = model_perception.score(test_X, test_y)
         perception_accuracy_collection.append(accuracy_perception)
 
         # ==========================算法4：单样本感知机准则算法=======================
-        optimal_one_sample_perception = Optimizer(loss, method='OneSamplePerception')
+        optimal_one_sample_perception = Optimizer(method='OneSamplePerception')
         model_one_sample_perception = LinearClassifier(optimal_one_sample_perception,
                                                        lr=0.001).fit(train_X, train_y)
-        test_predict_one_sample_perception = model_one_sample_perception.predict(test_X)
-        accuracy_one_sample_perception = Counter(np.multiply(test_predict_one_sample_perception,
-                                                             test_y))[1] / len(test_y)
+        accuracy_one_sample_perception = model_one_sample_perception.score(test_X, test_y)
         one_sample_perception_accuracy_collection.append(accuracy_one_sample_perception)
 
         # ==========================算法5：带间隔感知机准则算法=======================
-        optimal_margin_perception = Optimizer(loss, method='MarginPerception', margin=0.1)
+        optimal_margin_perception = Optimizer(method='MarginPerception', margin=0.1)
         model_margin_perception = LinearClassifier(optimal_margin_perception,
                                                    lr=0.001).fit(train_X, train_y)
-        test_predict_margin_perception = model_margin_perception.predict(test_X)
-        accuracy_margin_perception = Counter(np.multiply(test_predict_margin_perception,
-                                                         test_y))[1] / len(test_y)
+        accuracy_margin_perception = model_margin_perception.score(test_X, test_y)
         margin_perception_accuracy_collection.append(accuracy_margin_perception)
 
         # ==========================算法6：批量变增量感知机准则算法=======================
-        optimal_batch_lr_perception = Optimizer(loss, method='BatchLrPerception', margin=0.1)
+        optimal_batch_lr_perception = Optimizer(method='BatchLrPerception', margin=0.1)
         model_batch_lr_perception = LinearClassifier(optimal_batch_lr_perception,
-                                                   lr=0.001).fit(train_X, train_y)
-        test_predict_batch_lr_perception = model_batch_lr_perception.predict(test_X)
-        accuracy_batch_lr_perception = Counter(np.multiply(test_predict_batch_lr_perception,
-                                                           test_y))[1] / len(test_y)
+                                                     lr=0.001).fit(train_X, train_y)
+        accuracy_batch_lr_perception = model_batch_lr_perception.score(test_X, test_y)
         batch_lr_perception_accuracy_collection.append(accuracy_batch_lr_perception)
 
         # # ==========================算法7：Winnow算法=======================
@@ -362,40 +348,115 @@ def program_1(dataset):
         # accuracy_winnow_perception = Counter(np.multiply(test_predict_winnow_perception,
         #                                                  test_y))[1] / len(test_y)
         # winnow_perception_accuracy_collection.append(accuracy_winnow_perception)
+        #
+        # ==========================算法9：带间隔的松弛感知机算法=======================
+        optimal_relaxation_margin_perception = Optimizer(method='RelaxationMarginPerception',
+                                                         margin=10)
+        model_relaxation_margin_perception = LinearClassifier(optimal_relaxation_margin_perception,
+                                                              lr=0.001).fit(train_X, train_y)
+        accuracy_relaxation_margin_perception = model_relaxation_margin_perception.score(test_X, test_y)
+        relaxation_margin_perception_accuracy_collection.append(accuracy_relaxation_margin_perception)
+
+        # ==========================算法10：LMS算法=======================
+        optimal_lms_perception = Optimizer(method='LMS', margin=10)
+        model_lms_perception = LinearClassifier(optimal_lms_perception,
+                                                lr=0.001).fit(train_X, train_y)
+        accuracy_lms_perception = model_lms_perception.score(test_X, test_y)
+        lms_perception_accuracy_collection.append(accuracy_lms_perception)
+
+        # ==========================算法11：Ho-Kashyap算法=======================
+        # 初始化b值
+        hk_b = np.random.rand(train_X.shape[0], 1)
+        optimal_hk_perception = Optimizer(method='Ho-Kashyap', hk_b=hk_b)
+        model_hk_perception = LinearClassifier(optimal_hk_perception,
+                                               lr=0.1).fit(train_X, train_y)
+        accuracy_hk_perception = model_hk_perception.score(test_X, test_y)
+        hk_perception_accuracy_collection.append(accuracy_hk_perception)
+
+        # ==========================算法12：Ho-Kashyap改进算法=======================
+        # 初始化b值
+        hk_b = np.random.rand(train_X.shape[0], 1)
+        optimal_plus_hk_perception = Optimizer(method='Plus-Ho-Kashyap', hk_b=hk_b)
+        model_plus_hk_perception = LinearClassifier(optimal_plus_hk_perception,
+                                                    lr=0.1).fit(train_X, train_y)
+        accuracy_plus_hk_perception = model_plus_hk_perception.score(test_X, test_y)
+        plus_hk_perception_accuracy_collection.append(accuracy_plus_hk_perception)
 
     # 画图
     epochs = range(1, epoch + 1)
 
     # todo 绘图
-    plt.plot(epochs, gd_accuracy_collection,
-             label='算法1：梯度下降平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(gd_accuracy_collection), np.var(gd_accuracy_collection)))
-    plt.plot(epochs, newtons_accuracy_collection,
-             label='算法2：牛顿平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(newtons_accuracy_collection), np.var(newtons_accuracy_collection)))
-    plt.plot(epochs, perception_accuracy_collection,
-             label='算法3：感知机平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(perception_accuracy_collection), np.var(perception_accuracy_collection)))
-    plt.plot(epochs, one_sample_perception_accuracy_collection,
-             label='算法4：单样本感知机平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(one_sample_perception_accuracy_collection),
-                 np.var(one_sample_perception_accuracy_collection)))
-    plt.plot(epochs, margin_perception_accuracy_collection,
-             label='算法5：带间隔感知机平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(margin_perception_accuracy_collection),
-                 np.var(margin_perception_accuracy_collection)))
-    plt.plot(epochs, batch_lr_perception_accuracy_collection,
-             label='算法6：批变增量感知机平均精度={:.4f}和精度方差{:.4f}'.format(
-                 np.mean(batch_lr_perception_accuracy_collection),
-                 np.var(batch_lr_perception_accuracy_collection)))
+    ax.plot(epochs, gd_accuracy_collection,
+            label='算法1：梯度下降平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(gd_accuracy_collection), np.var(gd_accuracy_collection)))
+    print('算法1：梯度下降平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(gd_accuracy_collection), np.var(gd_accuracy_collection)))
+    ax.plot(epochs, newtons_accuracy_collection,
+            label='算法2：牛顿平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(newtons_accuracy_collection), np.var(newtons_accuracy_collection)))
+    print('算法2：牛顿平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(newtons_accuracy_collection), np.var(newtons_accuracy_collection)))
+    ax.plot(epochs, perception_accuracy_collection,
+            label='算法3：感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(perception_accuracy_collection), np.var(perception_accuracy_collection)))
+    print('算法3：感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(perception_accuracy_collection), np.var(perception_accuracy_collection)))
+    ax.plot(epochs, one_sample_perception_accuracy_collection,
+            label='算法4：单样本感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(one_sample_perception_accuracy_collection),
+                np.var(one_sample_perception_accuracy_collection)))
+    print('算法4：单样本感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(one_sample_perception_accuracy_collection),
+        np.var(one_sample_perception_accuracy_collection)))
+    ax.plot(epochs, margin_perception_accuracy_collection,
+            label='算法5：带间隔感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(margin_perception_accuracy_collection),
+                np.var(margin_perception_accuracy_collection)))
+    print('算法5：带间隔感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(margin_perception_accuracy_collection),
+        np.var(margin_perception_accuracy_collection)))
+    ax.plot(epochs, batch_lr_perception_accuracy_collection,
+            label='算法6：批变增量感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(batch_lr_perception_accuracy_collection),
+                np.var(batch_lr_perception_accuracy_collection)))
+    print('算法6：批变增量感知机平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(batch_lr_perception_accuracy_collection),
+        np.var(batch_lr_perception_accuracy_collection)))
     # plt.plot(epochs, winnow_perception_accuracy_collection,
     #          label='算法7：Winnow算法平均精度={:.4f}和精度方差{:.4f}'.format(
     #              np.mean(winnow_perception_accuracy_collection),
     #              np.var(winnow_perception_accuracy_collection)))
+    ax.plot(epochs, relaxation_margin_perception_accuracy_collection,
+            label='算法9：带间隔的松弛感知机算法平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(relaxation_margin_perception_accuracy_collection),
+                np.var(relaxation_margin_perception_accuracy_collection)))
+    print('算法9：带间隔的松弛感知机算法平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(relaxation_margin_perception_accuracy_collection),
+        np.var(relaxation_margin_perception_accuracy_collection)))
+    ax.plot(epochs, lms_perception_accuracy_collection,
+            label='算法10：LMS算法平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(lms_perception_accuracy_collection),
+                np.var(lms_perception_accuracy_collection)))
+    print('算法10：LMS算法平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(lms_perception_accuracy_collection),
+        np.var(lms_perception_accuracy_collection)))
+    ax.plot(epochs, hk_perception_accuracy_collection,
+            label='算法11：Ho-Kashyap算法平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(hk_perception_accuracy_collection),
+                np.var(hk_perception_accuracy_collection)))
+    print('算法11：Ho-Kashyap算法平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(hk_perception_accuracy_collection),
+        np.var(hk_perception_accuracy_collection)))
+    ax.plot(epochs, plus_hk_perception_accuracy_collection,
+            label='算法12：Ho-Kashyap改进算法平均精度={:.4f}和精度方差{:.4f}'.format(
+                np.mean(plus_hk_perception_accuracy_collection),
+                np.var(plus_hk_perception_accuracy_collection)))
+    print('算法12：Ho-Kashyap改进算法平均精度={:.4f}和精度方差{:.4f}'.format(
+        np.mean(plus_hk_perception_accuracy_collection),
+        np.var(plus_hk_perception_accuracy_collection)))
 
-    plt.title('不同优化器的平均精度和精度的方差')
-    plt.legend()
-    plt.show()
+    ax.set_title('类{}和类{}在不同优化器下的平均精度和精度的方差'.format(category[0], category[1]))
+    ax.legend()
 
 
 if __name__ == '__main__':
@@ -404,7 +465,13 @@ if __name__ == '__main__':
 
     iris = datasets.load_iris()
 
+    # 创建一个2x1的画布
+    fig, (ax1, ax2) = plt.subplots(2, 1, layout='constrained')
+
     # a题
-    program_1(iris)
+    algorithm_compare(iris, [0, 2], ax1)
     print('----------')
+    algorithm_compare(iris, [1, 2], ax2)
+
+    plt.show()
 
