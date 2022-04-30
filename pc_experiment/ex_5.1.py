@@ -55,7 +55,6 @@ class Optimizer:
                 # 参考书上P186，算法3：感知机算法
                 for i in range(len(X)):
                     data = X[i].reshape(1, -1)
-                    target = y[i][0]
                     # 判断错分的样本
                     if np.dot(data, self.weights) <= 0:
                         threshold_gradient += lr * data.reshape(-1, 1)
@@ -95,7 +94,6 @@ class Optimizer:
                 # 参考书上P191，算法6：批量变增量感知机算法
                 for i in range(len(X)):
                     data = X[i].reshape(1, -1)
-                    target = y[i][0]
                     # 判断错分的样本
                     if np.dot(data, self.weights) <= 0:
                         threshold_gradient += data.reshape(-1, 1)

@@ -5,12 +5,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.mlab as mlab
 
-from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB
 from skspatial.objects import Line
 from skspatial.objects import Vector
 from scipy.stats import norm
-from ml_utils import plot_decision_boundaries
 
 
 def cal_cov_and_avg(samples):
