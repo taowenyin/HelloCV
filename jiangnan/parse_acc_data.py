@@ -7,11 +7,12 @@ import datetime
 import os
 
 from tqdm import tqdm
+from alive_progress import alive_bar
 
-# V0.1 2022.8.1
+# V0.2 2022.8.4
 # 1. 需要安装的依赖包
 # conda install openpyxl Pandas
-# pip install tqdm
+# pip install tqdm alive-progress
 # 2. 指令示例
 # python parse_acc_data.py --data-folder /Users/taowenyin/Database/jiangnan --axes Timestamp Z MAX_X
 
@@ -39,8 +40,7 @@ def parse_data_file(root_path, data_file, axes, save_path, suffix):
     org_data = file_data[axes]
     new_data = None
 
-    pbar = tqdm(range(len(org_data)), desc='处理{}中的数据'.format(data_file))
-    for i in pbar:
+    for i in tqdm(range(len(org_data)), desc='处理{}中的数据'.format(data_file), leave=False):
         data_list = []
         fields_list = []
         fields_top_list = []
@@ -62,7 +62,8 @@ def parse_data_file(root_path, data_file, axes, save_path, suffix):
 
                 field_data_labels_list = [field]
             else:
-                field_data = item_data[field].split(' ')
+                # field_data = item_data[field].split(' ')
+                field_data = [float(data) for data in item_data[field].split(' ')]
                 # 获取顶部字段
                 if i == 0:
                     field_top_data_labels_list = [(field + str(j + 1)) for j in range(2048)]
@@ -100,9 +101,8 @@ def parse_data_file(root_path, data_file, axes, save_path, suffix):
         # 插入时间差的列
         new_data.insert(1, "diff", np.array(diff_list))
 
-    # 输出数据
-    print('===>向{}写入新数据...'.format(str(file_name + suffix)))
-    new_data.to_excel(os.path.join(save_path, file_name + suffix))
+    with alive_bar(title='向{}写入新数据...'.format(str(file_name + suffix))):
+        new_data.to_excel(os.path.join(save_path, file_name + suffix))
 
 
 if __name__ == '__main__':
